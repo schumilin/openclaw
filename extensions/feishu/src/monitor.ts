@@ -10,6 +10,7 @@ import {
 import { resolveFeishuAccount, listEnabledFeishuAccounts } from "./accounts.js";
 import { handleFeishuMessage, type FeishuMessageEvent, type FeishuBotAddedEvent } from "./bot.js";
 import { createFeishuWSClient, createEventDispatcher } from "./client.js";
+import { getMessageFeishu } from "./send.js";
 import { probeFeishu } from "./probe.js";
 import type { ResolvedFeishuAccount } from "./types.js";
 
@@ -120,6 +121,31 @@ function registerEventHandlers(
         // Skip typing indicator emoji (if used)
         if (emoji === "Typing") {
           return;
+        }
+
+        // Only process reactions on messages sent by this bot.
+        // Without this filter, the agent receives spurious notifications for
+        // reactions the user leaves on *any* message (including other people's
+        // messages in unrelated chats), which is noisy and confusing.
+        if (myBotId) {
+          try {
+            const reactedMsg = await getMessageFeishu({ cfg, messageId, accountId });
+            if (!reactedMsg || reactedMsg.senderOpenId !== myBotId) {
+              log(
+                `feishu[${accountId}]: ignoring reaction on non-bot message ${messageId} ` +
+                  `(sender: ${reactedMsg?.senderOpenId ?? "unknown"})`,
+              );
+              return;
+            }
+          } catch (err) {
+            // If we can't verify the message sender (e.g. permission error,
+            // deleted message), skip the reaction rather than routing a
+            // potentially irrelevant event to the agent.
+            log(
+              `feishu[${accountId}]: could not verify reacted message ${messageId}, skipping: ${String(err)}`,
+            );
+            return;
+          }
         }
 
         log(`feishu[${accountId}]: reaction ${emoji} on ${messageId} from ${senderId}`);
